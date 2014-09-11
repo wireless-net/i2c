@@ -1,0 +1,12 @@
+{application, i2c,
+ [
+  {description, "Obsidian i2c port application"},
+  {vsn, git},
+  {registered, []},
+  {applications, [
+		  kernel,
+                  stdlib
+                 ]},
+  {mod, { i2c_app, []}},
+  {env, []}
+ ]}.
