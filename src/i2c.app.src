@@ -1,6 +1,6 @@
 {application, i2c,
  [
-  {description, "Obsidian i2c port application"},
+  {description, "Obsidian i2c driver application"},
   {vsn, git},
   {registered, []},
   {applications, [

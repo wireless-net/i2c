@@ -10,7 +10,7 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
-    error_logger:info_msg("Starting i2c port application...~n"),
+    error_logger:info_msg("Starting i2c driver application...~n"),
     i2c_sup:start_link().
 
 stop(_State) ->

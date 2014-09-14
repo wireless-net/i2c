@@ -1,5 +1,5 @@
-#export KERNEL_HEADERS=/home/dbutter/projects/lumenosys/blackfin/adi-linux-code/arch/blackfin/include
+export I2C_TOOLS_HEADERS="../i2c-tools-3.1.1/include"
 export STRIP=bfin-linux-uclibc-strip
 export CC=bfin-linux-uclibc-gcc
-export CFLAGS="-Wall -O3 -funroll-loops -ffast-math -fomit-frame-pointer -mcpu=bf537-0.3 "
+export CFLAGS="-Wall -O3 -fpic -shared -funroll-loops -ffast-math -fomit-frame-pointer -mcpu=bf537-0.3 -I$I2C_TOOLS_HEADERS"
 #export LDFLAGS=""

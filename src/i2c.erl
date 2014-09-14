@@ -8,8 +8,17 @@
 %%%-------------------------------------------------------------------
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
-%% Commentary: This Erlang port provides access devices connected to
-%% the i2c bus on the Lumenosys Obsidian Blackfin board.
+%% Commentary:
+%%
+%% This Erlang port driver provides access to I2c devices connected to
+%% the i2c bus on the Lumenosys Obsidian Blackfin board. Some code
+%% and ideas borrowed from Tony Rogvall's I2C driver:
+%% https://github.com/tonyrog/i2c
+%% 
+%% This driver was written using driver_async to ensure the VM would
+%% not hang due to any delay in talking to I2C devices (which could be
+%% caused by noise, contention, device failures, etc.). Also, the best
+%% way to really understand something is to do it yourself!
 %% 
 %% Example:
 %%
@@ -20,17 +29,17 @@
 %% L3G4200D example configuration
 %%
 %% Write CTRL_REG2:
-%%   i2c:write_byte(16#68, 16#21, 16#0). % default filter settings
+%%   i2c:smbus_write_byte_data(16#68, 16#21, 16#0). % default filter settings
 %% Write CTRL_REG3
-%%   i2c:write_byte(16#68, 16#22, 16#0). % no interrupts enabled
+%%   i2c:smbus_write_byte_data(16#68, 16#22, 16#0). % no interrupts enabled
 %% Write CTRL_REG4
-%%   i2c:write_byte(16#68, 16#23, 16#80). % enable block data update (BDU)
+%%   i2c:smbus_write_byte_data(16#68, 16#23, 16#80). % enable block data update (BDU)
 %% Write Reference
-%%   i2c:write_byte(16#68, 16#25, 16#0). % just zero, no ref for interrupt generation
+%%   i2c:smbus_write_byte_data(16#68, 16#25, 16#0). % just zero, no ref for interrupt generation
 %% Write CTRL_REG5
-%%   i2c:write_byte(16#68, 16#24, 16#0). % no fifo, interrupt or filtering paths needed
+%%   i2c:smbus_write_byte_data(16#68, 16#24, 16#0). % no fifo, interrupt or filtering paths needed
 %% Write CTRL_REG1
-%%   i2c:write_byte(16#68, 16#20, 16#6f). % 200Hz rate, 50Hz cutoff, enable device, all axis
+%%   i2c:smbus_write_byte_data(16#68, 16#20, 16#6f). % 200Hz rate, 50Hz cutoff, enable device, all axis
 %%
 %%
 %%
@@ -48,136 +57,198 @@
 
 -define(SERVER, ?MODULE).
 
--export([write/4, write_byte/2, write_byte/3, write_word/3, read/3, read_byte/1, read_byte/2,
-         read_word/2, publish/7, publish/5, publish/4, publish/8, stop_publisher/1,
-         subscribe/5, subscribe/4, stop_subscriber/1]).
+-export([open/0, close/0]).
+
+-export([smbus/5,smbus_read/3,smbus_write/4]).
+-export([smbus_read_byte/1,
+	 smbus_read_byte_data/2,
+	 smbus_read_word_data/2,
+	 smbus_read_block_data/2,
+	 %% smbus_write_quick/2,
+	 smbus_write_byte/2,
+	 smbus_write_byte_data/3,
+	 smbus_write_word_data/3,
+	 smbus_write_block_data/3]).
+	 %% smbus_process_call/3,
+	 %% smbus_read_i2c_block_data/3,
+	 %% smbus_write_i2c_block_data/3,
+	 %% smbus_block_process_call/3]).
+
+-define(CMD_OPEN, 1).
+-define(CMD_CLOSE, 2).
+%% -define(CMD_SET_RETRIES, 3).
+%% -define(CMD_SET_TIMEOUT, 4).
+%% -define(CMD_SET_SLAVE, 5).
+%% -define(CMD_SET_SLAVEF, 6).
+%% -define(CMD_SET_TENBIT, 7).
+%% -define(CMD_SET_PEC, 8).
+%% -define(CMD_GET_FUNCS, 9).
+%% -define(CMD_RDWR, 10).
+-define(CMD_SMBUS, 11).
+%% -define(CMD_DEBUG, 12).
+
+-define(I2C_SMBUS_READ,	 1).
+-define(I2C_SMBUS_WRITE, 0).
+-define(I2C_SMBUS_QUICK, 0).
+-define(I2C_SMBUS_BYTE,	 1).
+-define(I2C_SMBUS_BYTE_DATA, 2).
+-define(I2C_SMBUS_WORD_DATA, 3).
+-define(I2C_SMBUS_PROC_CALL, 4).
+-define(I2C_SMBUS_BLOCK_DATA, 5).
+-define(I2C_SMBUS_I2C_BLOCK_BROKEN, 6).
+-define(I2C_SMBUS_BLOCK_PROC_CALL, 7).	%% SMBus 2.0
+-define(I2C_SMBUS_I2C_BLOCK_DATA, 8).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-%% stop() ->
-%%     i2c_port_proc ! stop,
-%%     unregister(i2c_port_proc).
+open() ->
+    call_port(?CMD_OPEN, <<>>).
 
-%% read(Addr, Len) ->
-%%     call_port({i2c_read, Addr, Len}).
+close() ->
+    call_port(?CMD_CLOSE, <<>>).
 
-read(Addr, Reg, Len) ->
-    call_port({i2c_read_reg, Addr, Reg, Len}).
+smbus(Addr, ReadWrite, Command, Size, Data) ->
+    call_port(?CMD_SMBUS, <<Addr:16/unsigned-little-integer, 
+			    ReadWrite:8/unsigned-little-integer, 
+			    Command:8/unsigned-little-integer, 
+			    Size:32/unsigned-little-integer, 
+			    Data/binary>>).
 
-read_byte(Addr) ->
-    call_port({i2c_read, Addr, 1}).
+smbus_read(Addr, Command, Size) ->
+    smbus(Addr, ?I2C_SMBUS_READ, Command, Size, <<>>).
 
-read_byte(Addr, Reg) ->
-    call_port({i2c_read_reg, Addr, Reg, 1}).
+smbus_write(Addr, Command, Size, Data) ->
+    smbus(Addr, ?I2C_SMBUS_WRITE, Command, Size, Data).
 
-%% read_word(Addr) ->
-%%     call_port({i2c_read, Addr, 2}).
-
-read_word(Addr, Reg) ->
-    call_port({i2c_read_reg, Addr, Reg, 2}).
-
-%% write(Addr, Len, Data) ->
-%%     call_port({i2c_write, Addr, Len, Data}).
-
-write(Addr, Reg, Len, Data) ->
-    call_port({i2c_write_reg, Addr, Reg, Len, Data}).
-
-write_byte(Addr, Data) ->
-    call_port({i2c_write, Addr, 1, Data}).
-
-write_byte(Addr, Reg, Data) ->
-    call_port({i2c_write_reg, Addr, Reg, 1, Data}).
-
-%% write_word(Addr, Data) ->
-%%     call_port({i2c_write, Addr, 2, Data}).
-
-write_word(Addr, Reg, Data) ->
-    call_port({i2c_write_reg, Addr, Reg, 2, Data}).
-
-publish(Addr, Size, Topic, Priority) ->
-    case string:len(Topic) > 20 of
-        true ->
-            io:format("topic length must be less than 21 characters~n"),
-            error;
-        false ->
-            call_port({i2c_publish, Addr, Size, Topic, Priority, encode_policy(q_fifo), 5}),
-            ok
+smbus_read_byte(Addr) ->
+    case smbus_read(Addr, 0, ?I2C_SMBUS_BYTE) of
+	{ok, <<Value:8, _/binary>>} ->
+	    {ok,Value};
+	Error -> Error
     end.
 
-publish(Addr, Reg, Size, Topic, Priority) ->
-    case string:len(Topic) > 20 of
-        true ->
-            io:format("topic length must be less than 21 characters~n"),
-            error;
-        false ->
-            call_port({i2c_publish_reg, Addr, Reg, Size, Topic, Priority, encode_policy(q_fifo), 5}),
-            ok
+smbus_read_byte_data(Addr, Command) ->
+    case smbus_read(Addr, Command, ?I2C_SMBUS_BYTE_DATA) of
+	{ok, <<Value:8, _/binary>>} ->
+	    {ok,Value};
+	Error -> Error
     end.
 
-publish(Addr, Size, Topic, Priority, Period, QPolicy, MaxQMessages) ->
-    case string:len(Topic) > 20 of
-        true ->
-            io:format("topic length must be less than 21 characters~n"),
-            error;
-        false ->
-            call_port({i2c_publish, Addr, Size, Topic, Priority, Period, QPolicy, MaxQMessages}),
-            ok
+smbus_read_word_data(Addr, Command) ->
+    case smbus_read(Addr, Command, ?I2C_SMBUS_WORD_DATA) of
+	{ok, <<Value:16/native, _/binary>>} ->
+	    {ok, Value};
+	Error ->
+	    Error
     end.
 
-publish(Addr, Reg, Size, Topic, Priority, Period, QPolicy, MaxQMessages) ->
-    case string:len(Topic) > 20 of
-        true ->
-            io:format("topic length must be less than 21 characters~n"),
-            error;
-        false ->
-            call_port({i2c_publish_reg, Addr, Reg, Size, Topic, Priority, Period, QPolicy, MaxQMessages}),
-            ok
+smbus_read_block_data(Addr, Command) ->
+    case smbus_read(Addr, Command, ?I2C_SMBUS_BLOCK_DATA) of
+	{ok, <<N, Return:N/binary, _/binary>>} ->
+	    {ok, Return};
+	Error -> Error
     end.
 
+%% smbus_write_quick(Bus, Value)
+%%   when is_integer(Value) ->
+%%     smbus(Bus,Value,0,?I2C_SMBUS_QUICK,
+%% 	  <<>>).
 
-%% publish(Addr, Reg, Size, Topic) ->
-%%     call_port({i2c_publish, Addr, Reg, Size, Topic, 99, encode_policy(q_fifo), 5}).
+smbus_write_byte(Addr, Value) when is_integer(Value) ->
+    smbus_write(Addr, Value, ?I2C_SMBUS_BYTE, <<>>).
 
-stop_publisher(Topic) ->
-    call_port({i2c_stop_publisher, Topic}).
+smbus_write_byte_data(Addr, Command, Value) when is_integer(Command), is_integer(Value) ->
+    smbus_write(Addr, Command, ?I2C_SMBUS_BYTE_DATA, <<Value>>).
 
-subscribe(Addr, Size, Topic, Priority) ->
-    case string:len(Topic) > 20 of
-        true ->
-            io:format("topic length must be less than 21 characters~n"),
-            error;
-        false ->
-            call_port({i2c_subscribe, Addr, Size, Topic, Priority}),
-            ok
-    end.
+smbus_write_word_data(Addr, Command, Value) when is_integer(Command), is_integer(Value) ->
+    smbus_write(Addr, Command, ?I2C_SMBUS_WORD_DATA, <<Value:16/native>>).
 
-subscribe(Addr, Reg, Size, Topic, Priority) ->
-    case string:len(Topic) > 20 of
-        true ->
-            io:format("topic length must be less than 21 characters~n"),
-            error;
-        false ->
-            call_port({i2c_subscribe_reg, Addr, Reg, Size, Topic, Priority}),
-            ok
-    end.
+smbus_write_block_data(Addr, Command, Data) when is_integer(Command), is_binary(Data) ->
+    N = max(byte_size(Data), 32),
+    smbus_write(Addr,Command, ?I2C_SMBUS_BLOCK_DATA, <<N,Data:N/binary>>).
 
-
-%% subscribe(Addr, Reg, Size, Topic) ->
-%%     call_port({i2c_subscribe, Addr, Reg, Size, Topic, 99}).
-
-stop_subscriber(Topic) ->
-    call_port({i2c_stop_subscriber, Topic}).
+%% smbus_process_call(Bus, Command, Value) ->
+%%     case smbus(Bus,?I2C_SMBUS_WRITE,Command,
+%% 	       ?I2C_SMBUS_PROC_CALL,<<Value:16/native>>) of
+%% 	{ok,<<Return:16/native>>} ->
+%% 	    {ok,Return};
+%% 	Error -> Error
+%%     end.
+%% smbus_read_i2c_block_data(Bus, Command, Length)
+%%   when is_integer(Command), is_integer(Length), Length >= 0 ->
+%%     N = max(Length, 32),
+%%     Data = <<N>>,
+%%     Size = if N =:= 32 ->
+%% 		   ?I2C_SMBUS_I2C_BLOCK_BROKEN;
+%% 	      true ->
+%% 		   ?I2C_SMBUS_I2C_BLOCK_DATA
+%% 	   end,
+%%     case smbus(Bus,?I2C_SMBUS_READ,Command,Size,Data) of
+%% 	{ok,<<N,Return:N/binary,_/binary>>} ->
+%% 	    {ok,Return};
+%% 	Error -> Error
+%%     end.
+%% smbus_write_i2c_block_data(Bus, Command, Data)
+%%   when is_integer(Command), is_binary(Data) ->
+%%     N = max(byte_size(Data),32),
+%%     smbus(Bus,?I2C_SMBUS_WRITE,Command,
+%% 	  ?I2C_SMBUS_I2C_BLOCK_BROKEN,<<N,Data:N/binary>>).
+%% smbus_block_process_call(Bus, Command, Values) ->
+%%     N = max(byte_size(Values),32),
+%%     Data = <<N,Values:N/binary>>,
+%%     case smbus(Bus,?I2C_SMBUS_WRITE,Command,
+%% 	       ?I2C_SMBUS_BLOCK_PROC_CALL,Data) of
+%% 	{ok,<<M,Return:M/binary,_/binary>>} ->
+%% 	    {ok,Return};
+%% 	Error -> Error
+%%     end.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
 
-call_port(Msg) ->
-    i2c_port_proc ! {call, self(), Msg},
+
+%%--------------------------------------------------------------------
+%% Internal functions
+%%--------------------------------------------------------------------
+
+%% blocking call port driver
+call(Port, Cmd, Data) ->
+    case erlang:port_control(Port, Cmd, Data) of
+	<<0>> ->
+	    ok;
+	<<1>> ->
+	    {ok, pending};
+	Error ->
+	    io:format("unexpected response ~p~n", [Error]),
+	    error
+    end.
+
+wait_for_completion(Port) ->
     receive
-        { i2c_port_proc, Result } ->
+	{Port, {data, RespData}} ->
+	    case RespData of
+		[0] -> 
+		    ok;
+		[255|<<E/binary>>] ->
+		    {error, erlang:binary_to_atom(E, latin1)};
+		[1|<<Y>>] -> {ok,Y};
+		[2|<<Y:16/native-unsigned>>] -> {ok, Y};
+		[4|<<Y:32/native-unsigned>>] -> {ok, Y};
+		[8|<<Y:64/native-unsigned>>] -> {ok, Y};
+		[3|<<Return/binary>>] -> {ok,Return}
+	    end
+	%% Error ->
+	%%     io:format("DEBUGGING: unexpected response ~p~n", [Error]),
+	%%     error
+    end.
+
+call_port(Cmd, Data) ->
+    i2c_port_proc ! {call, self(), Cmd, Data},
+    receive
+        {i2c_port_proc, Result} ->
             Result;
 	%% If the calling process has setup a monitor on the tunnel,
 	%% this will tell them it exited so they don't hange waiting
@@ -190,126 +261,41 @@ start_link() ->
     Pid = spawn_link(?SERVER, init, []),
     {ok, Pid}.
 
+load_driver() ->
+%%    case erl_ddll:load_driver(code:priv_dir("i2c"), "i2c") of
+    case erl_ddll:load_driver(".", "i2c") of
+	ok -> ok; 
+	{error, already_loaded} -> ok;
+	Reason -> exit({error, could_not_load_driver, Reason})
+    end.
+
 init() ->
     register(i2c_port_proc, self()),
-    process_flag(trap_exit, true),
-    PortPrg = filename:join(code:priv_dir("i2c"), "i2c_port"),
-    Port = open_port({spawn_executable, PortPrg}, 
-		     [{packet, 2}, use_stdio, binary, exit_status]),
+    ok = load_driver(),
+    Port = erlang:open_port({spawn_driver, "i2c"},[binary]),
+    %% open the i2c driver
+    ok = call(Port, ?CMD_OPEN, <<>>),
     loop(Port).
 
 %% The i2c_port_proc process loop
 loop(Port) ->
     receive
-        {call, Caller, Msg} ->
-%            io:format("got call, calling port...~n"),
-            Port ! {self(), {command, encode(Msg)}},
-%            io:format("waiting for result~n"),
-            receive
-                {Port, {data, Data}} ->
-		    %%io:format("got data ~p~n", [Data]),
-                    Caller ! {i2c_port_proc, decode(Data)}
-            end,
-            loop(Port);
-        {Port, _Data} ->
-            io:format("The port sent us something!"),
-            loop(Port);
+        {call, Caller, Cmd, Data} ->
+	    %% If the command send to the driver results in an
+	    %% immediate response, we get ok, just return it. If the
+	    %% command requires any work at all, we get {ok, pending}
+	    %% and must wait for the command to complete.
+	    case call(Port, Cmd, Data) of
+		ok ->
+		    Caller ! {i2c_port_proc, ok};
+		{ok, pending} ->
+		    PendingResult = wait_for_completion(Port),
+		    Caller ! {i2c_port_proc, PendingResult}
+	    end;
+	%% {Port, _Data} ->
+        %%     io:format("Warning: the port sent us something unxpected!");
         stop ->
-            Port ! {self(), close},
-            receive
-                {Port, closed} ->
-                    exit(normal)
-            end;
-        {'EXIT', Port, Reason} ->
-            io:format("Port terminated for reason: ~p~n", [Reason]),
-            exit(port_terminated)
-    end.
-
-%% encode takes atoms and converts to corresponding op-code
-encode({i2c_read, Addr, Size}) ->
-    [<<1:16/unsigned-little-integer>>, 
-     <<Addr:16/unsigned-little-integer>>, 
-     <<Size:16/unsigned-little-integer>>];
-encode({i2c_read_reg, Addr, Reg, Size}) ->
-    [<<2:16/unsigned-little-integer>>, 
-     <<Addr:16/unsigned-little-integer>>, 
-     <<Reg:16/unsigned-little-integer>>, 
-     <<Size:16/unsigned-little-integer>>];
-encode({i2c_write, Addr, Size, Data}) ->
-    [<<3:16/unsigned-little-integer>>, 
-     <<Addr:16/unsigned-little-integer>>, 
-     <<Size:16/unsigned-little-integer>>,
-     <<Data:16/unsigned-little-integer>>];
-encode({i2c_write_reg, Addr, Reg, Size, Data}) ->
-    [<<4:16/unsigned-little-integer>>, 
-     <<Addr:16/unsigned-little-integer>>, 
-     <<Reg:16/unsigned-little-integer>>, 
-     <<Size:16/unsigned-little-integer>>,
-     <<Data:16/unsigned-little-integer>>];
-encode({i2c_publish, Addr, Size, Topic, Priority, Period, QPolicy, MaxQMessages}) ->
-    TopicLen = string:len(Topic),
-    [<<5:16/unsigned-little-integer>>, 
-     <<Addr:16/unsigned-little-integer>>, 
-     <<Size:16/unsigned-little-integer>>,
-     <<Priority:32/unsigned-little-integer>>,
-     <<Period:32/unsigned-little-integer>>,
-     <<QPolicy:32/unsigned-little-integer>>,
-     <<MaxQMessages:32/unsigned-little-integer>>,
-     <<TopicLen:32/unsigned-little-integer>>,
-     Topic];
-encode({i2c_publish_reg, Addr, Reg, Size, Topic, Priority, Period, QPolicy, MaxQMessages}) ->
-    TopicLen = string:len(Topic),
-    [<<6:16/unsigned-little-integer>>, 
-     <<Addr:16/unsigned-little-integer>>, 
-     <<Reg:16/unsigned-little-integer>>, 
-     <<Size:16/unsigned-little-integer>>,
-     <<Priority:32/unsigned-little-integer>>,
-     <<Period:32/unsigned-little-integer>>,
-     <<QPolicy:32/unsigned-little-integer>>,
-     <<MaxQMessages:32/unsigned-little-integer>>,
-     <<TopicLen:32/unsigned-little-integer>>,
-     Topic];
-encode({i2c_subscribe, Addr, Size, Topic, Priority}) ->
-    TopicLen = string:len(Topic),
-    [<<7:16/unsigned-little-integer>>, 
-     <<Addr:16/unsigned-little-integer>>, 
-     <<Size:16/unsigned-little-integer>>,
-     <<Priority:32/unsigned-little-integer>>,
-     <<TopicLen:32/unsigned-little-integer>>,
-     Topic];
-encode({i2c_subscribe_reg, Addr, Reg, Size, Topic, Priority}) ->
-    TopicLen = string:len(Topic),
-    [<<8:16/unsigned-little-integer>>, 
-     <<Addr:16/unsigned-little-integer>>, 
-     <<Reg:16/unsigned-little-integer>>, 
-     <<Size:16/unsigned-little-integer>>,
-     <<Priority:32/unsigned-little-integer>>,
-     <<TopicLen:32/unsigned-little-integer>>,
-     Topic];
-encode({i2c_stop_publisher, Topic}) ->
-    TopicLen = string:len(Topic),
-    [<<9:16/unsigned-little-integer>>, 
-     <<TopicLen:32/unsigned-little-integer>>,
-     Topic];
-encode({i2c_stop_subscriber, Topic}) ->
-    TopicLen = string:len(Topic),
-    [<<10:16/unsigned-little-integer>>, 
-     <<TopicLen:32/unsigned-little-integer>>,
-     Topic].
-
-
-%% encode the policy to use for queuing published messages
-encode_policy(q_fifo) ->
-    0.                                          % 0 is Q_FIFO == XNSYNCH_FIFO
-
-%% decode matches against response codes and handles accordingly Any
-%% response not expected is an error and we crash (intentionally).
-decode(<<0:16/unsigned-little-integer,_Arg/binary>>) ->                              
-    ok;						% command OK
-decode(<<1:16/unsigned-little-integer,Arg/binary>>) ->                              
-    Arg.				% command OK, with data
-
-%% decode([0|_Arg]) ->                              
-%%     ok;                                        % command OK
-%% decode([1,0|Arg]) ->                              
-%%     Arg.
+	    ok = call(Port, ?CMD_CLOSE, <<>>),
+	    exit(normal)
+    end,
+    loop(Port).
