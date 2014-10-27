@@ -262,8 +262,8 @@ start_link() ->
     {ok, Pid}.
 
 load_driver() ->
-%%    case erl_ddll:load_driver(code:priv_dir("i2c"), "i2c") of
-    case erl_ddll:load_driver(".", "i2c") of
+    case erl_ddll:load_driver(code:priv_dir("i2c"), "i2c") of
+%%    case erl_ddll:load_driver(".", "i2c") of
 	ok -> ok; 
 	{error, already_loaded} -> ok;
 	Reason -> exit({error, could_not_load_driver, Reason})
