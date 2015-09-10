@@ -33,7 +33,7 @@ $ make all
 Usage example
 -------------
 
-```sh
+```erlang
 %% the IOX board's I2C address (set by the jumpers on the board)
 IOXAddr = 16#21,
 %% The config register address for bottom 8 bits
