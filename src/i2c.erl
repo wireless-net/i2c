@@ -1,10 +1,10 @@
 %%%-------------------------------------------------------------------
-%%% @author Devin Butterfield <dbutter@db>
-%%% @copyright (C) 2014, Devin Butterfield
+%%% @author Lumenosys Robotics <dbutter@lumenosys.com>
+%%% @copyright (C) 2015, Lumenosys Robotics
 %%% @doc
 %%%
 %%% @end
-%%% Created : 11 Aug 2014 by Devin Butterfield <dbutter@db>
+%%% Created : 11 Aug 2015 by Lumenosys Robotics <dbutter@lumenosys.com>
 %%%-------------------------------------------------------------------
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
@@ -21,10 +21,6 @@
 %% way to really understand something is to do it yourself!
 %% 
 %% Example:
-%%
-%% Note:
-%% Nice way to format data:
-%% io:format("~8.16.0B~n",[Id]).
 %%
 %% L3G4200D example configuration
 %%
@@ -169,42 +165,6 @@ smbus_write_block_data(Addr, Command, Data) when is_integer(Command), is_binary(
     N = max(byte_size(Data), 32),
     smbus_write(Addr,Command, ?I2C_SMBUS_BLOCK_DATA, <<N,Data:N/binary>>).
 
-%% smbus_process_call(Bus, Command, Value) ->
-%%     case smbus(Bus,?I2C_SMBUS_WRITE,Command,
-%% 	       ?I2C_SMBUS_PROC_CALL,<<Value:16/native>>) of
-%% 	{ok,<<Return:16/native>>} ->
-%% 	    {ok,Return};
-%% 	Error -> Error
-%%     end.
-%% smbus_read_i2c_block_data(Bus, Command, Length)
-%%   when is_integer(Command), is_integer(Length), Length >= 0 ->
-%%     N = max(Length, 32),
-%%     Data = <<N>>,
-%%     Size = if N =:= 32 ->
-%% 		   ?I2C_SMBUS_I2C_BLOCK_BROKEN;
-%% 	      true ->
-%% 		   ?I2C_SMBUS_I2C_BLOCK_DATA
-%% 	   end,
-%%     case smbus(Bus,?I2C_SMBUS_READ,Command,Size,Data) of
-%% 	{ok,<<N,Return:N/binary,_/binary>>} ->
-%% 	    {ok,Return};
-%% 	Error -> Error
-%%     end.
-%% smbus_write_i2c_block_data(Bus, Command, Data)
-%%   when is_integer(Command), is_binary(Data) ->
-%%     N = max(byte_size(Data),32),
-%%     smbus(Bus,?I2C_SMBUS_WRITE,Command,
-%% 	  ?I2C_SMBUS_I2C_BLOCK_BROKEN,<<N,Data:N/binary>>).
-%% smbus_block_process_call(Bus, Command, Values) ->
-%%     N = max(byte_size(Values),32),
-%%     Data = <<N,Values:N/binary>>,
-%%     case smbus(Bus,?I2C_SMBUS_WRITE,Command,
-%% 	       ?I2C_SMBUS_BLOCK_PROC_CALL,Data) of
-%% 	{ok,<<M,Return:M/binary,_/binary>>} ->
-%% 	    {ok,Return};
-%% 	Error -> Error
-%%     end.
-
 %%====================================================================
 %% Internal functions
 %%====================================================================
@@ -263,7 +223,6 @@ start_link() ->
 
 load_driver() ->
     case erl_ddll:load_driver(code:priv_dir("i2c"), "i2c") of
-%%    case erl_ddll:load_driver(".", "i2c") of
 	ok -> ok; 
 	{error, already_loaded} -> ok;
 	Reason -> exit({error, could_not_load_driver, Reason})
@@ -293,7 +252,7 @@ loop(Port) ->
 		    Caller ! {i2c_port_proc, PendingResult}
 	    end;
 	%% {Port, _Data} ->
-        %%     io:format("Warning: the port sent us something unxpected!");
+        %%     io:format("DEBUG: Warning: the port sent us something unxpected!");
         stop ->
 	    ok = call(Port, ?CMD_CLOSE, <<>>),
 	    exit(normal)
